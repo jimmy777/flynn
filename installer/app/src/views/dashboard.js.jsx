@@ -1,16 +1,13 @@
-import Panel from './panel';
 import InstallCert from './install-cert';
 import Dispatcher from '../dispatcher';
 
 var InstallProgress = React.createClass({
 	render: function () {
 		return (
-			<Panel>
-				<form ref="form" method="POST" action={"https://dashboard."+ this.state.domain +"/user/sessions"} onSubmit={this.__handleFormSubmit}>
-					<input type="hidden" name="token" value={this.state.dashboardLoginToken} />
-					<InstallCert certURL={"data:application/x-x509-ca-cert;base64,"+ this.state.cert} />
-				</form>
-			</Panel>
+			<form ref="form" method="POST" action={"https://dashboard."+ this.state.domainName +"/user/sessions"} onSubmit={this.__handleFormSubmit}>
+				<input type="hidden" name="token" value={this.state.dashboardLoginToken} />
+				<InstallCert certURL={"data:application/x-x509-ca-cert;base64,"+ this.state.caCert} />
+			</form>
 		);
 	},
 
@@ -46,14 +43,18 @@ var InstallProgress = React.createClass({
 
 	__handleWindowFocus: function () {
 		Dispatcher.dispatch({
-			name: 'CHECK_CERT'
+			name: 'CHECK_CERT',
+			clusterID: this.props.clusterID,
+			domainName: this.state.domainName
 		});
 	},
 
 	__handleFormSubmit: function (e) {
 		e.preventDefault();
 		Dispatcher.dispatch({
-			name: 'CHECK_CERT'
+			name: 'CHECK_CERT',
+			clusterID: this.props.clusterID,
+			domainName: this.state.domainName
 		});
 	}
 });
