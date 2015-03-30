@@ -30,7 +30,7 @@ type FormationRepo struct {
 	releases  *ReleaseRepo
 	artifacts *ArtifactRepo
 
-	subscriptions map[chan<- *ct.ExpandedFormation]struct{}
+	subscriptions map[chan *ct.ExpandedFormation]struct{}
 	stopListener  chan struct{}
 	subMtx        sync.RWMutex
 }
@@ -41,7 +41,7 @@ func NewFormationRepo(db *postgres.DB, appRepo *AppRepo, releaseRepo *ReleaseRep
 		apps:          appRepo,
 		releases:      releaseRepo,
 		artifacts:     artifactRepo,
-		subscriptions: make(map[chan<- *ct.ExpandedFormation]struct{}),
+		subscriptions: make(map[chan *ct.ExpandedFormation]struct{}),
 		stopListener:  make(chan struct{}),
 	}
 }
@@ -186,7 +186,11 @@ func (r *FormationRepo) startListener() error {
 	go func() {
 		for {
 			select {
-			case n := <-listener.Notify:
+			case n, ok := <-listener.Notify:
+				if !ok || n == nil {
+					r.unsubscribeAll()
+					return
+				}
 				ids := strings.SplitN(n.Extra, ":", 2)
 				go r.publish(ids[0], ids[1])
 			case <-r.stopListener:
@@ -198,7 +202,17 @@ func (r *FormationRepo) startListener() error {
 	return nil
 }
 
-func (r *FormationRepo) Subscribe(ch chan<- *ct.ExpandedFormation, stopCh <-chan struct{}, since time.Time) error {
+func (r *FormationRepo) unsubscribeAll() {
+	r.subMtx.Lock()
+	defer r.subMtx.Unlock()
+
+	for ch := range r.subscriptions {
+		r.unsubscribeLocked(ch)
+		close(ch)
+	}
+}
+
+func (r *FormationRepo) Subscribe(ch chan *ct.ExpandedFormation, stopCh <-chan struct{}, since time.Time) error {
 	var startListener bool
 	r.subMtx.Lock()
 	if len(r.subscriptions) == 0 {
@@ -215,7 +229,7 @@ func (r *FormationRepo) Subscribe(ch chan<- *ct.ExpandedFormation, stopCh <-chan
 	return nil
 }
 
-func (r *FormationRepo) sendUpdatedSince(ch chan<- *ct.ExpandedFormation, stopCh <-chan struct{}, since time.Time) error {
+func (r *FormationRepo) sendUpdatedSince(ch chan *ct.ExpandedFormation, stopCh <-chan struct{}, since time.Time) error {
 	rows, err := r.db.Query("SELECT app_id, release_id, processes, created_at, updated_at FROM formations WHERE updated_at >= $1 ORDER BY updated_at DESC", since)
 	if err != nil {
 		return err
@@ -243,6 +257,10 @@ func (r *FormationRepo) sendUpdatedSince(ch chan<- *ct.ExpandedFormation, stopCh
 func (r *FormationRepo) Unsubscribe(ch chan *ct.ExpandedFormation) {
 	r.subMtx.Lock()
 	defer r.subMtx.Unlock()
+	r.unsubscribeLocked(ch)
+}
+
+func (r *FormationRepo) unsubscribeLocked(ch chan *ct.ExpandedFormation) {
 	go func() {
 		// drain to prevent deadlock while removing the listener
 		for range ch {
@@ -250,7 +268,10 @@ func (r *FormationRepo) Unsubscribe(ch chan *ct.ExpandedFormation) {
 	}()
 	delete(r.subscriptions, ch)
 	if len(r.subscriptions) == 0 {
-		r.stopListener <- struct{}{}
+		select {
+		case r.stopListener <- struct{}{}:
+		default:
+		}
 	}
 }
 
