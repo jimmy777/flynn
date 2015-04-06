@@ -2,7 +2,7 @@ package installer
 
 import (
 	"crypto/x509"
-	"encoding/json"
+	"database/sql"
 	"encoding/pem"
 	"fmt"
 	"io/ioutil"
@@ -11,50 +11,33 @@ import (
 
 	"github.com/flynn/flynn/cli/config"
 	"github.com/flynn/flynn/pkg/sshkeygen"
+	_ "github.com/mattn/go-sqlite3"
 )
 
-var keysDir, dataPath string
+var keysDir, dbPath string
 
 func init() {
 	dir := filepath.Join(config.Dir(), "installer")
 	keysDir = filepath.Join(dir, "keys")
-	dataPath = filepath.Join(dir, "data.json")
+	dbPath = filepath.Join(dir, "data.db")
 }
 
-// TODO: handle loading old config data format (a single stack)
-func (i *Installer) load() error {
-	i.persistMutex.Lock()
-	defer i.persistMutex.Unlock()
+func (i *Installer) openDB() error {
+	i.dbMtx.Lock()
+	defer i.dbMtx.Unlock()
 
-	file, err := os.Open(dataPath)
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		return err
+	}
+	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-	dec := json.NewDecoder(file)
-	if err := dec.Decode(&i); err != nil {
+	i.db = db
+	if err := db.Ping(); err != nil {
 		return err
 	}
-	return nil
-}
-
-func (i *Installer) persist() error {
-	i.persistMutex.Lock()
-	defer i.persistMutex.Unlock()
-
-	if err := os.MkdirAll(filepath.Dir(dataPath), 0755); err != nil {
-		return err
-	}
-	file, err := os.Create(dataPath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	enc := json.NewEncoder(file)
-	if err := enc.Encode(i); err != nil {
-		return err
-	}
-	return nil
+	return i.migrateDB()
 }
 
 func saveSSHKey(name string, key *sshkeygen.SSHKey) error {

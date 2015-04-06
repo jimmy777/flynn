@@ -138,7 +138,12 @@ func (api *httpAPI) AssetManifest() (*assetManifest, error) {
 }
 
 func (api *httpAPI) GetClusters(w http.ResponseWriter, req *http.Request, params httprouter.Params) {
-	httphelper.JSON(w, 200, api.Installer.Clusters)
+	clusters, err := api.Installer.ListClusters()
+	if err != nil {
+		httphelper.Error(w, err)
+		return
+	}
+	httphelper.JSON(w, 200, clusters)
 }
 
 func (api *httpAPI) LaunchCluster(w http.ResponseWriter, req *http.Request, params httprouter.Params) {
@@ -149,8 +154,12 @@ func (api *httpAPI) LaunchCluster(w http.ResponseWriter, req *http.Request, para
 	}
 
 	var creds aws.CredentialsProvider
+	var credentialID string
+	var credentialSecret string
 	if input.Creds.AccessKeyID != "" && input.Creds.SecretAccessKey != "" {
 		creds = aws.Creds(input.Creds.AccessKeyID, input.Creds.SecretAccessKey, "")
+		credentialID = input.Creds.AccessKeyID
+		credentialSecret = input.Creds.SecretAccessKey
 	} else {
 		var err error
 		creds, err = aws.EnvCreds()
@@ -158,9 +167,13 @@ func (api *httpAPI) LaunchCluster(w http.ResponseWriter, req *http.Request, para
 			httphelper.ValidationError(w, "", err.Error())
 			return
 		}
+		credentialID = "aws_env"
 	}
+	api.Installer.SaveAWSCredentials(credentialID, credentialSecret)
 	cluster := &Cluster{
+		State:        "starting",
 		Creds:        creds,
+		CredentialID: credentialID,
 		Region:       input.Region,
 		InstanceType: input.InstanceType,
 		NumInstances: input.NumInstances,
@@ -178,13 +191,14 @@ func (api *httpAPI) LaunchCluster(w http.ResponseWriter, req *http.Request, para
 }
 
 func (api *httpAPI) DeleteCluster(w http.ResponseWriter, req *http.Request, params httprouter.Params) {
-	id := params.ByName("id")
-	_, err := api.Installer.FindCluster(id)
-	if err != nil {
-		w.WriteHeader(404)
+	if err := api.Installer.DeleteCluster(params.ByName("id")); err != nil {
+		if err == ClusterNotFoundError {
+			w.WriteHeader(404)
+			return
+		}
+		httphelper.Error(w, err)
 		return
 	}
-	api.Installer.DeleteCluster(id)
 	w.WriteHeader(200)
 }
 
