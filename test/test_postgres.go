@@ -11,7 +11,9 @@ import (
 	"github.com/flynn/flynn/appliance/postgresql/state"
 	ct "github.com/flynn/flynn/controller/types"
 	"github.com/flynn/flynn/discoverd/client"
+	"github.com/flynn/flynn/pkg/attempt"
 	"github.com/flynn/flynn/pkg/postgres"
+	"github.com/flynn/flynn/pkg/stream"
 )
 
 type PostgresSuite struct {
@@ -111,6 +113,55 @@ func (s *PostgresSuite) TestDeploySingleAsync(t *c.C) {
 			}
 		},
 	})
+}
+
+func (s *PostgresSuite) TestDeploySystem(t *c.C) {
+	client := s.controllerClient(t)
+	app, err := client.GetApp("postgres")
+	t.Assert(err, c.IsNil)
+
+	release, err := client.GetAppRelease(app.ID)
+	release.ID = ""
+	t.Assert(client.CreateRelease(release), c.IsNil)
+	deployment, err := client.CreateDeployment(app.ID, release.ID)
+	t.Assert(err, c.IsNil)
+
+	// use a function to create the event stream as a new stream will be needed
+	// after deploying the postgres
+	var events chan *ct.DeploymentEvent
+	var eventStream stream.Stream
+	connectStream := func() {
+		events = make(chan *ct.DeploymentEvent)
+		err := attempt.Strategy{
+			Total: 10 * time.Second,
+			Delay: 500 * time.Millisecond,
+		}.Run(func() (err error) {
+			eventStream, err = client.StreamDeployment(deployment.ID, events)
+			return
+		})
+		t.Assert(err, c.IsNil)
+	}
+	connectStream()
+	defer eventStream.Close()
+
+loop:
+	for {
+		select {
+		case e, ok := <-events:
+			if !ok {
+				debug(t, "reconnecting deployment event stream")
+				connectStream()
+				continue
+			}
+			if e.Status == "complete" || e.Status == "failed" {
+				debugf(t, "got deployment event: %s", e.Status)
+				break loop
+			}
+			debugf(t, "got deployment event: %s %s", e.JobType, e.JobState)
+		case <-time.After(60 * time.Second):
+			t.Fatal("timed out waiting for deployment event")
+		}
+	}
 }
 
 func (s *PostgresSuite) testDeploy(t *c.C, d *pgDeploy) {
