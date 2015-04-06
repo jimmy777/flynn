@@ -146,7 +146,14 @@ func (db *DB) Exec(query string, args ...interface{}) error {
 	if err != nil {
 		return err
 	}
-	_, err = stmt.Exec(args...)
+	for startTime := time.Now(); time.Since(startTime) < 10*time.Second; time.Sleep(500 * time.Millisecond) {
+		_, err = stmt.Exec(args...)
+		if e, ok := err.(*pq.Error); ok && e.Code.Name() == "read_only_sql_transaction" {
+			println("===>", time.Now().Format("2006-01-02T15:04:05.999"), fmt.Sprintf("pausing due to read-only transaction"))
+			continue
+		}
+		return err
+	}
 	return err
 }
 
