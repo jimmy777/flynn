@@ -218,10 +218,21 @@ loop:
 		select {
 		case event, ok := <-d.jobEvents:
 			if !ok {
-				return loggedErr("unexpected close of job event stream")
+				// the stream could close when the controller connects to the new postgres
+				// primary, so try to reconnect
+				log.Warn("reconnecting job event stream", "lastEventID", d.lastEventID)
+				if err := d.streamJobEvents(); err != nil {
+					log.Error("error reconnecting job event stream", "err", err)
+					return err
+				}
+				continue
 			}
+			if event.Job.ReleaseID != d.OldReleaseID {
+				continue
+			}
+			d.lastEventID = event.ID
 			log.Info("got job event", "job_id", event.JobID, "type", event.Type, "state", event.State)
-			if event.State == "down" && event.Type == "postgres" && event.Job.ReleaseID == d.OldReleaseID {
+			if event.State == "down" && event.Type == "postgres" {
 				actual++
 				if actual == d.Processes["postgres"] {
 					break loop
