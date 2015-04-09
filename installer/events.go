@@ -165,109 +165,109 @@ func (i *Installer) SendEvent(event *httpEvent) {
 	}
 }
 
-func (s *Cluster) findPrompt(id string) (*httpPrompt, error) {
-	if s.pendingPrompt != nil && s.pendingPrompt.ID == id {
-		return s.pendingPrompt, nil
+func (c *Cluster) findPrompt(id string) (*httpPrompt, error) {
+	if c.pendingPrompt != nil && c.pendingPrompt.ID == id {
+		return c.pendingPrompt, nil
 	}
 	return nil, errors.New("Prompt not found")
 }
 
-func (s *Cluster) sendPrompt(prompt *httpPrompt) *httpPrompt {
-	s.pendingPrompt = prompt
+func (c *Cluster) sendPrompt(prompt *httpPrompt) *httpPrompt {
+	c.pendingPrompt = prompt
 
-	s.installer.dbMtx.Lock()
-	tx, err := s.installer.db.Begin()
+	c.installer.dbMtx.Lock()
+	tx, err := c.installer.db.Begin()
 	if err != nil {
-		s.installer.logger.Debug("sendPrompt Begin error: %s", err.Error())
+		c.installer.logger.Debug("sendPrompt Begin error: %s", err.Error())
 		tx.Rollback()
 	} else {
-		if _, err := tx.Exec(`INSERT INTO prompts (id, cluster, type, message, yes, input, resolved) VALUES (?, ?, ?, ?, ?, ?, ?)`, prompt.ID, s.ID, prompt.Type, prompt.Message, prompt.Yes, prompt.Input, prompt.Resolved); err != nil {
-			s.installer.logger.Debug(fmt.Sprintf("sendPrompt SQL Error: %s", err.Error()))
+		if _, err := tx.Exec(`INSERT INTO prompts (id, cluster, type, message, yes, input, resolved) VALUES (?, ?, ?, ?, ?, ?, ?)`, prompt.ID, c.ID, prompt.Type, prompt.Message, prompt.Yes, prompt.Input, prompt.Resolved); err != nil {
+			c.installer.logger.Debug(fmt.Sprintf("sendPrompt SQL Error: %s", err.Error()))
 			tx.Rollback()
 		} else {
 			tx.Commit()
 		}
 	}
-	s.installer.dbMtx.Unlock()
+	c.installer.dbMtx.Unlock()
 
-	s.sendEvent(&httpEvent{
+	c.sendEvent(&httpEvent{
 		Type:      "prompt",
-		ClusterID: s.ID,
+		ClusterID: c.ID,
 		Prompt:    prompt,
 	})
 
 	res := <-prompt.resChan
 	prompt.Resolved = true
 
-	tx, err = s.installer.db.Begin()
+	tx, err = c.installer.db.Begin()
 	if err != nil {
-		s.installer.logger.Debug("sendPrompt res Begin error: %s", err.Error())
+		c.installer.logger.Debug("sendPrompt res Begin error: %s", err.Error())
 		tx.Rollback()
 	} else {
 		if _, err := tx.Exec(`UPDATE prompts SET resolved = ? WHERE id = ?`, prompt.Resolved, prompt.ID); err != nil {
-			s.installer.logger.Debug(fmt.Sprintf("sendPrompt res SQL Error: %s", err.Error()))
+			c.installer.logger.Debug(fmt.Sprintf("sendPrompt res SQL Error: %s", err.Error()))
 			tx.Rollback()
 		} else {
 			tx.Commit()
 		}
 	}
 
-	s.sendEvent(&httpEvent{
+	c.sendEvent(&httpEvent{
 		Type:      "prompt",
-		ClusterID: s.ID,
+		ClusterID: c.ID,
 		Prompt:    prompt,
 	})
 
 	return res
 }
 
-func (s *Cluster) YesNoPrompt(msg string) bool {
-	res := s.sendPrompt(&httpPrompt{
+func (c *Cluster) YesNoPrompt(msg string) bool {
+	res := c.sendPrompt(&httpPrompt{
 		ID:      random.Hex(16),
 		Type:    "yes_no",
 		Message: msg,
 		resChan: make(chan *httpPrompt),
-		cluster: s,
+		cluster: c,
 	})
 	return res.Yes
 }
 
-func (s *Cluster) PromptInput(msg string) string {
-	res := s.sendPrompt(&httpPrompt{
+func (c *Cluster) PromptInput(msg string) string {
+	res := c.sendPrompt(&httpPrompt{
 		ID:      random.Hex(16),
 		Type:    "input",
 		Message: msg,
 		resChan: make(chan *httpPrompt),
-		cluster: s,
+		cluster: c,
 	})
 	return res.Input
 }
 
-func (s *Cluster) sendEvent(event *httpEvent) {
-	s.installer.SendEvent(event)
+func (c *Cluster) sendEvent(event *httpEvent) {
+	c.installer.SendEvent(event)
 }
 
-func (s *Cluster) SendInstallLogEvent(description string) {
-	s.sendEvent(&httpEvent{
+func (c *Cluster) SendInstallLogEvent(description string) {
+	c.sendEvent(&httpEvent{
 		Type:        "install_log",
-		ClusterID:   s.ID,
+		ClusterID:   c.ID,
 		Description: description,
 	})
 }
 
-func (s *Cluster) SendError(err error) {
-	s.sendEvent(&httpEvent{
+func (c *Cluster) SendError(err error) {
+	c.sendEvent(&httpEvent{
 		Type:        "error",
-		ClusterID:   s.ID,
+		ClusterID:   c.ID,
 		Description: err.Error(),
 	})
 }
 
-func (s *Cluster) handleDone() {
-	s.sendEvent(&httpEvent{
+func (c *Cluster) handleDone() {
+	c.sendEvent(&httpEvent{
 		Type:      "install_done",
-		ClusterID: s.ID,
-		Cluster:   s,
+		ClusterID: c.ID,
+		Cluster:   c,
 	})
-	s.installer.logger.Info(s.DashboardLoginMsg())
+	c.installer.logger.Info(c.DashboardLoginMsg())
 }

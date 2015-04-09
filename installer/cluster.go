@@ -71,95 +71,95 @@ type Cluster struct {
 	done          bool
 }
 
-func (s *Cluster) SetDefaultsAndValidate() error {
-	if s.NumInstances == 0 {
-		s.NumInstances = 1
+func (c *Cluster) SetDefaultsAndValidate() error {
+	if c.NumInstances == 0 {
+		c.NumInstances = 1
 	}
 
-	if s.InstanceType == "" {
-		s.InstanceType = DefaultInstanceType
+	if c.InstanceType == "" {
+		c.InstanceType = DefaultInstanceType
 	}
 
-	if s.VpcCidr == "" {
-		s.VpcCidr = "10.0.0.0/16"
+	if c.VpcCidr == "" {
+		c.VpcCidr = "10.0.0.0/16"
 	}
 
-	if s.SubnetCidr == "" {
-		s.SubnetCidr = "10.0.0.0/21"
+	if c.SubnetCidr == "" {
+		c.SubnetCidr = "10.0.0.0/21"
 	}
 
-	if err := s.validateInputs(); err != nil {
+	if err := c.validateInputs(); err != nil {
 		return err
 	}
 
-	s.InstanceIPs = make([]string, 0, s.NumInstances)
-	s.ec2 = ec2.New(s.Creds, s.Region, nil)
-	s.cf = cloudformation.New(s.Creds, s.Region, nil)
+	c.InstanceIPs = make([]string, 0, c.NumInstances)
+	c.ec2 = ec2.New(c.Creds, c.Region, nil)
+	c.cf = cloudformation.New(c.Creds, c.Region, nil)
 	return nil
 }
 
-func (s *Cluster) validateInputs() error {
-	if s.NumInstances <= 0 {
+func (c *Cluster) validateInputs() error {
+	if c.NumInstances <= 0 {
 		return fmt.Errorf("You must specify at least one instance")
 	}
 
-	if s.Region == "" {
+	if c.Region == "" {
 		return fmt.Errorf("No region specified")
 	}
 
-	if s.NumInstances > 5 {
+	if c.NumInstances > 5 {
 		return fmt.Errorf("Maximum of 5 instances exceeded")
 	}
 
-	if s.NumInstances == 2 {
+	if c.NumInstances == 2 {
 		return fmt.Errorf("You must specify 1 or 3+ instances, not 2")
 	}
 
 	for _, t := range DisallowedEC2InstanceTypes {
-		if s.InstanceType == t {
-			return fmt.Errorf("Unsupported instance type %s", s.InstanceType)
+		if c.InstanceType == t {
+			return fmt.Errorf("Unsupported instance type %s", c.InstanceType)
 		}
 	}
 
 	return nil
 }
 
-func (s *Cluster) StackAddCmd() (string, error) {
-	if s.ControllerKey == "" || s.ControllerPin == "" || s.Domain == nil || s.Domain.Name == "" {
+func (c *Cluster) StackAddCmd() (string, error) {
+	if c.ControllerKey == "" || c.ControllerPin == "" || c.Domain == nil || c.Domain.Name == "" {
 		return "", fmt.Errorf("Not enough data present")
 	}
-	return fmt.Sprintf("flynn cluster add -g %[1]s:2222 -p %[2]s default https://controller.%[1]s %[3]s", s.Domain.Name, s.ControllerPin, s.ControllerKey), nil
+	return fmt.Sprintf("flynn cluster add -g %[1]s:2222 -p %[2]s default https://controller.%[1]s %[3]s", c.Domain.Name, c.ControllerPin, c.ControllerKey), nil
 }
 
-func (s *Cluster) ClusterConfig() *cfg.Cluster {
+func (c *Cluster) ClusterConfig() *cfg.Cluster {
 	return &cfg.Cluster{
-		Name:    s.StackName,
-		URL:     "https://controller." + s.Domain.Name,
-		Key:     s.ControllerKey,
-		GitHost: fmt.Sprintf("%s:2222", s.Domain.Name),
-		TLSPin:  s.ControllerPin,
+		Name:    c.StackName,
+		URL:     "https://controller." + c.Domain.Name,
+		Key:     c.ControllerKey,
+		GitHost: fmt.Sprintf("%s:2222", c.Domain.Name),
+		TLSPin:  c.ControllerPin,
 	}
 }
 
-func (s *Cluster) DashboardLoginMsg() (string, error) {
-	if s.DashboardLoginToken == "" || s.Domain == nil || s.Domain.Name == "" {
+func (c *Cluster) DashboardLoginMsg() (string, error) {
+	if c.DashboardLoginToken == "" || c.Domain == nil || c.Domain.Name == "" {
 		return "", fmt.Errorf("Not enough data present")
 	}
-	return fmt.Sprintf("The built-in dashboard can be accessed at http://dashboard.%s with login token %s", s.Domain.Name, s.DashboardLoginToken), nil
+	return fmt.Sprintf("The built-in dashboard can be accessed at http://dashboard.%s with login token %s", c.Domain.Name, c.DashboardLoginToken), nil
 }
 
-func (s *Cluster) saveFields(fields []string, values []interface{}) error {
-	return s.saveFieldsForTable("clusters", fields, values)
+func (c *Cluster) saveFields(fields []string, values []interface{}) error {
+	return c.saveFieldsForTable("clusters", fields, values)
 }
 
-func (s *Cluster) saveAWSFields(fields []string, values []interface{}) error {
-	return s.saveFieldsForTable("aws_clusters", fields, values)
+func (c *Cluster) saveAWSFields(fields []string, values []interface{}) error {
+	return c.saveFieldsForTable("aws_clusters", fields, values)
 }
 
-func (s *Cluster) saveFieldsForTable(table string, fields []string, values []interface{}) error {
-	s.installer.dbMtx.Lock()
-	defer s.installer.dbMtx.Unlock()
-	tx, err := s.installer.db.Begin()
+func (c *Cluster) saveFieldsForTable(table string, fields []string, values []interface{}) error {
+	c.installer.dbMtx.Lock()
+	defer c.installer.dbMtx.Unlock()
+	tx, err := c.installer.db.Begin()
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -175,7 +175,7 @@ func (s *Cluster) saveFieldsForTable(table string, fields []string, values []int
 	if table != "clusters" {
 		clusterIDColumn = "cluster"
 	}
-	values = append(values, s.ID)
+	values = append(values, c.ID)
 	if _, err := tx.Exec(fmt.Sprintf(`UPDATE %s SET %s WHERE %s = ?`, table, strings.Join(set, ", "), clusterIDColumn), values...); err != nil {
 		tx.Rollback()
 		return err
@@ -186,16 +186,16 @@ func (s *Cluster) saveFieldsForTable(table string, fields []string, values []int
 	return nil
 }
 
-func (s *Cluster) saveInstanceIPs() error {
-	s.installer.dbMtx.Lock()
-	defer s.installer.dbMtx.Unlock()
-	tx, err := s.installer.db.Begin()
+func (c *Cluster) saveInstanceIPs() error {
+	c.installer.dbMtx.Lock()
+	defer c.installer.dbMtx.Unlock()
+	tx, err := c.installer.db.Begin()
 	if err != nil {
 		tx.Rollback()
 		return err
 	}
-	for _, ip := range s.InstanceIPs {
-		if _, err := tx.Exec(`INSERT INTO instance_ips (ip, cluster) VALUES (?, ?)`, ip, s.ID); err != nil {
+	for _, ip := range c.InstanceIPs {
+		if _, err := tx.Exec(`INSERT INTO instance_ips (ip, cluster) VALUES (?, ?)`, ip, c.ID); err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -206,15 +206,15 @@ func (s *Cluster) saveInstanceIPs() error {
 	return nil
 }
 
-func (s *Cluster) saveDomain() error {
-	s.installer.dbMtx.Lock()
-	defer s.installer.dbMtx.Unlock()
-	tx, err := s.installer.db.Begin()
+func (c *Cluster) saveDomain() error {
+	c.installer.dbMtx.Lock()
+	defer c.installer.dbMtx.Unlock()
+	tx, err := c.installer.db.Begin()
 	if err != nil {
 		tx.Rollback()
 		return err
 	}
-	if _, err := tx.Exec(`INSERT INTO domains (name, token, cluster) VALUES (?, ?, ?)`, s.Domain.Name, s.Domain.Token, s.ID); err != nil {
+	if _, err := tx.Exec(`INSERT INTO domains (name, token, cluster) VALUES (?, ?, ?)`, c.Domain.Name, c.Domain.Token, c.ID); err != nil {
 		tx.Rollback()
 		return err
 	}
@@ -224,80 +224,80 @@ func (s *Cluster) saveDomain() error {
 	return nil
 }
 
-func (s *Cluster) setState(state string) {
-	s.State = state
-	s.sendEvent(&httpEvent{
-		ClusterID:   s.ID,
+func (c *Cluster) setState(state string) {
+	c.State = state
+	c.sendEvent(&httpEvent{
+		ClusterID:   c.ID,
 		Type:        "cluster_state",
-		Description: s.State,
+		Description: c.State,
 	})
-	if err := s.saveFields([]string{"state"}, []interface{}{s.State}); err != nil {
-		s.installer.logger.Debug(fmt.Sprintf("setState error: %s", err.Error()))
+	if err := c.saveFields([]string{"state"}, []interface{}{c.State}); err != nil {
+		c.installer.logger.Debug(fmt.Sprintf("setState error: %s", err.Error()))
 	}
 }
 
-func (s *Cluster) RunAWS() {
+func (c *Cluster) RunAWS() {
 	go func() {
 		defer func() {
-			s.done = true
-			s.handleDone()
+			c.done = true
+			c.handleDone()
 		}()
 
 		steps := []func() error{
-			s.createKeyPair,
-			s.allocateDomain,
-			s.fetchImageID,
-			s.createStack,
-			s.fetchStackOutputs,
-			s.configureDNS,
-			s.bootstrap,
+			c.createKeyPair,
+			c.allocateDomain,
+			c.fetchImageID,
+			c.createStack,
+			c.fetchStackOutputs,
+			c.configureDNS,
+			c.bootstrap,
 		}
 
 		for _, step := range steps {
 			if err := step(); err != nil {
-				s.setState("error")
-				s.SendError(err)
+				c.setState("error")
+				c.SendError(err)
 				return
 			}
 		}
 
-		s.setState("running")
+		c.setState("running")
 
-		if err := s.configureCLI(); err != nil {
-			s.SendInstallLogEvent(fmt.Sprintf("WARNING: Failed to configure CLI: %s", err))
+		if err := c.configureCLI(); err != nil {
+			c.SendInstallLogEvent(fmt.Sprintf("WARNING: Failed to configure CLI: %s", err))
 		}
 	}()
 }
 
-func (s *Cluster) DeleteAWS() {
+func (c *Cluster) DeleteAWS() {
 	// TODO(jvatic): Send log events
-	s.cf = cloudformation.New(s.Creds, s.Region, nil)
+	c.cf = cloudformation.New(c.Creds, c.Region, nil)
 	go func() {
-		s.setState("deleting")
-		if err := s.cf.DeleteStack(&cloudformation.DeleteStackInput{
-			StackName: aws.String(s.StackName),
+		c.setState("deleting")
+		if err := c.cf.DeleteStack(&cloudformation.DeleteStackInput{
+			StackName: aws.String(c.StackName),
 		}); err != nil {
-			s.setState("error")
-			s.SendError(fmt.Errorf("Unable to delete stack %s: %s", s.StackName, err))
+			c.setState("error")
+			c.SendError(fmt.Errorf("Unable to delete stack %s: %s", c.StackName, err))
 		}
 	}()
 }
 
-func (s *Cluster) fetchImageID() (err error) {
+func (c *Cluster) fetchImageID() (err error) {
 	defer func() {
 		if err == nil {
 			return
 		}
-		s.SendInstallLogEvent(err.Error())
-		if s.ImageID != "" {
-			s.SendInstallLogEvent("Falling back to saved Image ID")
+		c.SendInstallLogEvent(err.Error())
+		if c.ImageID != "" {
+			c.SendInstallLogEvent("Falling back to saved Image ID")
 			err = nil
 			return
 		}
 		return
 	}()
 
-	s.SendInstallLogEvent("Fetching image manifest")
+	c.SendInstallLogEvent("Fetching image manifest")
 
 	latestVersion, err := fetchLatestVersion()
 	if err != nil {
@@ -305,35 +305,35 @@ func (s *Cluster) fetchImageID() (err error) {
 	}
 	var imageID string
 	for _, i := range latestVersion.Images {
-		if i.Region == s.Region {
+		if i.Region == c.Region {
 			imageID = i.ID
 			break
 		}
 	}
 	if imageID == "" {
-		return errors.New(fmt.Sprintf("No image found for region %s", s.Region))
+		return errors.New(fmt.Sprintf("No image found for region %s", c.Region))
 	}
-	s.ImageID = imageID
-	if err := s.saveFields([]string{"image"}, []interface{}{s.ImageID}); err != nil {
-		s.installer.logger.Debug(fmt.Sprintf("Error saving ImageID: %s", err.Error()))
+	c.ImageID = imageID
+	if err := c.saveFields([]string{"image"}, []interface{}{c.ImageID}); err != nil {
+		c.installer.logger.Debug(fmt.Sprintf("Error saving ImageID: %s", err.Error()))
 	}
 	return nil
 }
 
-func (s *Cluster) allocateDomain() error {
-	s.SendInstallLogEvent("Allocating domain")
+func (c *Cluster) allocateDomain() error {
+	c.SendInstallLogEvent("Allocating domain")
 	domain, err := AllocateDomain()
 	if err != nil {
 		return err
 	}
-	s.Domain = domain
-	if err := s.saveDomain(); err != nil {
-		s.installer.logger.Debug(fmt.Sprintf("Error saving Domain: %s", err.Error()))
+	c.Domain = domain
+	if err := c.saveDomain(); err != nil {
+		c.installer.logger.Debug(fmt.Sprintf("Error saving Domain: %s", err.Error()))
 	}
 	return nil
 }
 
-func (s *Cluster) loadKeyPair(name string) error {
+func (c *Cluster) loadKeyPair(name string) error {
 	keypair, err := loadSSHKey(name)
 	if err != nil {
 		return err
@@ -342,7 +342,7 @@ func (s *Cluster) loadKeyPair(name string) error {
 	if err != nil {
 		return err
 	}
-	res, err := s.ec2.DescribeKeyPairs(&ec2.DescribeKeyPairsRequest{
+	res, err := c.ec2.DescribeKeyPairs(&ec2.DescribeKeyPairsRequest{
 		Filters: []ec2.Filter{
 			{
 				Name:   aws.String("fingerprint"),
@@ -356,28 +356,28 @@ func (s *Cluster) loadKeyPair(name string) error {
 	if len(res.KeyPairs) == 0 {
 		return errors.New("No matching key found")
 	}
-	s.SSHKey = keypair
+	c.SSHKey = keypair
 	for _, p := range res.KeyPairs {
 		if *p.KeyName == name {
-			s.SSHKeyName = name
+			c.SSHKeyName = name
 			return nil
 		}
 	}
-	s.SSHKeyName = *res.KeyPairs[0].KeyName
-	return saveSSHKey(s.SSHKeyName, keypair)
+	c.SSHKeyName = *res.KeyPairs[0].KeyName
+	return saveSSHKey(c.SSHKeyName, keypair)
 }
 
-func (s *Cluster) createKeyPair() error {
+func (c *Cluster) createKeyPair() error {
 	keypairName := "flynn"
-	if s.SSHKeyName != "" {
-		keypairName = s.SSHKeyName
+	if c.SSHKeyName != "" {
+		keypairName = c.SSHKeyName
 	}
-	if err := s.loadKeyPair(keypairName); err == nil {
-		s.SendInstallLogEvent(fmt.Sprintf("Using saved key pair (%s)", s.SSHKeyName))
+	if err := c.loadKeyPair(keypairName); err == nil {
+		c.SendInstallLogEvent(fmt.Sprintf("Using saved key pair (%s)", c.SSHKeyName))
 		return nil
 	}
 
-	s.SendInstallLogEvent("Creating key pair")
+	c.SendInstallLogEvent("Creating key pair")
 	keypair, err := sshkeygen.Generate()
 	if err != nil {
 		return err
@@ -387,25 +387,25 @@ func (s *Cluster) createKeyPair() error {
 	publicKeyBytes := make([]byte, enc.EncodedLen(len(keypair.PublicKey)))
 	enc.Encode(publicKeyBytes, keypair.PublicKey)
 
-	res, err := s.ec2.ImportKeyPair(&ec2.ImportKeyPairRequest{
+	res, err := c.ec2.ImportKeyPair(&ec2.ImportKeyPairRequest{
 		KeyName:           aws.String(keypairName),
 		PublicKeyMaterial: publicKeyBytes,
 	})
 	if apiErr, ok := err.(aws.APIError); ok && apiErr.Code == "InvalidKeyPair.Duplicate" {
-		if s.YesNoPrompt(fmt.Sprintf("Key pair %s already exists, would you like to delete it?", keypairName)) {
-			s.SendInstallLogEvent("Deleting key pair")
-			if err := s.ec2.DeleteKeyPair(&ec2.DeleteKeyPairRequest{
+		if c.YesNoPrompt(fmt.Sprintf("Key pair %s already exists, would you like to delete it?", keypairName)) {
+			c.SendInstallLogEvent("Deleting key pair")
+			if err := c.ec2.DeleteKeyPair(&ec2.DeleteKeyPairRequest{
 				KeyName: aws.String(keypairName),
 			}); err != nil {
 				return err
 			}
-			return s.createKeyPair()
+			return c.createKeyPair()
 		} else {
 			for {
-				keypairName = s.PromptInput("Please enter a new key pair name")
+				keypairName = c.PromptInput("Please enter a new key pair name")
 				if keypairName != "" {
-					s.SSHKeyName = keypairName
-					return s.createKeyPair()
+					c.SSHKeyName = keypairName
+					return c.createKeyPair()
 				}
 			}
 		}
@@ -414,8 +414,8 @@ func (s *Cluster) createKeyPair() error {
 		return err
 	}
 
-	s.SSHKey = keypair
-	s.SSHKeyName = *res.KeyName
+	c.SSHKey = keypair
+	c.SSHKeyName = *res.KeyName
 
 	err = saveSSHKey(keypairName, keypair)
 	if err != nil {
@@ -429,20 +429,20 @@ type stackTemplateData struct {
 	DefaultInstanceType string
 }
 
-func (s *Cluster) createStack() error {
-	s.SendInstallLogEvent("Generating start script")
-	startScript, discoveryToken, err := genStartScript(s.NumInstances)
+func (c *Cluster) createStack() error {
+	c.SendInstallLogEvent("Generating start script")
+	startScript, discoveryToken, err := genStartScript(c.NumInstances)
 	if err != nil {
 		return err
 	}
-	s.DiscoveryToken = discoveryToken
-	if err := s.saveFields([]string{"discovery_token"}, []interface{}{s.DiscoveryToken}); err != nil {
-		s.installer.logger.Debug(fmt.Sprintf("Error saving DiscoveryToken: %s", err.Error()))
+	c.DiscoveryToken = discoveryToken
+	if err := c.saveFields([]string{"discovery_token"}, []interface{}{c.DiscoveryToken}); err != nil {
+		c.installer.logger.Debug(fmt.Sprintf("Error saving DiscoveryToken: %s", err.Error()))
 	}
 
 	var stackTemplateBuffer bytes.Buffer
 	err = stackTemplate.Execute(&stackTemplateBuffer, &stackTemplateData{
-		Instances:           make([]struct{}, s.NumInstances),
+		Instances:           make([]struct{}, c.NumInstances),
 		DefaultInstanceType: DefaultInstanceType,
 	})
 	if err != nil {
@@ -453,15 +453,15 @@ func (s *Cluster) createStack() error {
 	parameters := []cloudformation.Parameter{
 		{
 			ParameterKey:   aws.String("ImageId"),
-			ParameterValue: aws.String(s.ImageID),
+			ParameterValue: aws.String(c.ImageID),
 		},
 		{
 			ParameterKey:   aws.String("ClusterDomain"),
-			ParameterValue: aws.String(s.Domain.Name),
+			ParameterValue: aws.String(c.Domain.Name),
 		},
 		{
 			ParameterKey:   aws.String("KeyName"),
-			ParameterValue: aws.String(s.SSHKeyName),
+			ParameterValue: aws.String(c.SSHKeyName),
 		},
 		{
 			ParameterKey:   aws.String("UserData"),
@@ -469,37 +469,37 @@ func (s *Cluster) createStack() error {
 		},
 		{
 			ParameterKey:   aws.String("InstanceType"),
-			ParameterValue: aws.String(s.InstanceType),
+			ParameterValue: aws.String(c.InstanceType),
 		},
 		{
 			ParameterKey:   aws.String("VpcCidrBlock"),
-			ParameterValue: aws.String(s.VpcCidr),
+			ParameterValue: aws.String(c.VpcCidr),
 		},
 		{
 			ParameterKey:   aws.String("SubnetCidrBlock"),
-			ParameterValue: aws.String(s.SubnetCidr),
+			ParameterValue: aws.String(c.SubnetCidr),
 		},
 	}
 
 	stackEventsSince := time.Now()
 
-	if s.StackID != "" && s.StackName != "" {
-		if err := s.fetchStack(); err == nil && !strings.HasPrefix(*s.Stack.StackStatus, "DELETE") {
-			if s.YesNoPrompt(fmt.Sprintf("Stack found from previous installation (%s), would you like to delete it? (a new one will be created either way)", s.StackName)) {
-				s.SendInstallLogEvent(fmt.Sprintf("Deleting stack %s", s.StackName))
-				if err := s.cf.DeleteStack(&cloudformation.DeleteStackInput{
-					StackName: aws.String(s.StackName),
+	if c.StackID != "" && c.StackName != "" {
+		if err := c.fetchStack(); err == nil && !strings.HasPrefix(*c.Stack.StackStatus, "DELETE") {
+			if c.YesNoPrompt(fmt.Sprintf("Stack found from previous installation (%s), would you like to delete it? (a new one will be created either way)", c.StackName)) {
+				c.SendInstallLogEvent(fmt.Sprintf("Deleting stack %s", c.StackName))
+				if err := c.cf.DeleteStack(&cloudformation.DeleteStackInput{
+					StackName: aws.String(c.StackName),
 				}); err != nil {
-					s.SendInstallLogEvent(fmt.Sprintf("Unable to delete stack %s: %s", s.StackName, err))
+					c.SendInstallLogEvent(fmt.Sprintf("Unable to delete stack %s: %s", c.StackName, err))
 				}
 			}
 		}
 	}
 
-	s.SendInstallLogEvent("Creating stack")
-	res, err := s.cf.CreateStack(&cloudformation.CreateStackInput{
+	c.SendInstallLogEvent("Creating stack")
+	res, err := c.cf.CreateStack(&cloudformation.CreateStackInput{
 		OnFailure:        aws.String("DELETE"),
-		StackName:        aws.String(s.StackName),
+		StackName:        aws.String(c.StackName),
 		Tags:             []cloudformation.Tag{},
 		TemplateBody:     aws.String(stackTemplateString),
 		TimeoutInMinutes: aws.Integer(10),
@@ -508,12 +508,12 @@ func (s *Cluster) createStack() error {
 	if err != nil {
 		return err
 	}
-	s.StackID = *res.StackID
+	c.StackID = *res.StackID
 
-	if err := s.saveAWSFields([]string{"stack_id"}, []interface{}{s.StackID}); err != nil {
-		s.installer.logger.Debug(fmt.Sprintf("Error saving StackID: %s", err.Error()))
+	if err := c.saveAWSFields([]string{"stack_id"}, []interface{}{c.StackID}); err != nil {
+		c.installer.logger.Debug(fmt.Sprintf("Error saving StackID: %s", err.Error()))
 	}
-	return s.waitForStackCompletion("CREATE", stackEventsSince)
+	return c.waitForStackCompletion("CREATE", stackEventsSince)
 }
 
 func fetchLatestVersion() (*release.EC2Version, error) {
@@ -551,8 +551,8 @@ func (e StackEventSort) Less(i, j int) bool {
 	return e[j].Timestamp.After(e[i].Timestamp)
 }
 
-func (s *Cluster) waitForStackCompletion(action string, after time.Time) error {
-	stackID := aws.String(s.StackID)
+func (c *Cluster) waitForStackCompletion(action string, after time.Time) error {
+	stackID := aws.String(c.StackID)
 
 	actionCompleteSuffix := "_COMPLETE"
 	actionFailureSuffix := "_FAILED"
@@ -564,7 +564,7 @@ func (s *Cluster) waitForStackCompletion(action string, after time.Time) error {
 
 	var fetchStackEvents func() error
 	fetchStackEvents = func() error {
-		res, err := s.cf.DescribeStackEvents(&cloudformation.DescribeStackEventsInput{
+		res, err := c.cf.DescribeStackEvents(&cloudformation.DescribeStackEventsInput{
 			NextToken: nextToken,
 			StackName: stackID,
 		})
@@ -615,7 +615,7 @@ func (s *Cluster) waitForStackCompletion(action string, after time.Time) error {
 				if se.LogicalResourceID != nil {
 					name = fmt.Sprintf("%s (%s)", name, *se.LogicalResourceID)
 				}
-				s.SendInstallLogEvent(fmt.Sprintf("%s\t%s%s", name, *se.ResourceStatus, desc))
+				c.SendInstallLogEvent(fmt.Sprintf("%s\t%s%s", name, *se.ResourceStatus, desc))
 			}
 		}
 		if res.NextToken != nil {
@@ -634,7 +634,7 @@ func (s *Cluster) waitForStackCompletion(action string, after time.Time) error {
 			break
 		}
 		if isFailed {
-			return fmt.Errorf("Failed to create stack %s", s.StackName)
+			return fmt.Errorf("Failed to create stack %s", c.StackName)
 		}
 		time.Sleep(1 * time.Second)
 	}
@@ -642,11 +642,11 @@ func (s *Cluster) waitForStackCompletion(action string, after time.Time) error {
 	return nil
 }
 
-func (s *Cluster) fetchStack() error {
-	stackID := aws.String(s.StackID)
+func (c *Cluster) fetchStack() error {
+	stackID := aws.String(c.StackID)
 
-	s.SendInstallLogEvent("Fetching stack")
-	res, err := s.cf.DescribeStacks(&cloudformation.DescribeStacksInput{
+	c.SendInstallLogEvent("Fetching stack")
+	res, err := c.cf.DescribeStacks(&cloudformation.DescribeStacksInput{
 		StackName: stackID,
 	})
 	if err != nil {
@@ -659,62 +659,62 @@ func (s *Cluster) fetchStack() error {
 	if strings.HasPrefix(*stack.StackStatus, "DELETE_") {
 		return fmt.Errorf("Stack in unusable state: %s", *stack.StackStatus)
 	}
-	s.Stack = stack
+	c.Stack = stack
 	return nil
 }
 
-func (s *Cluster) fetchStackOutputs() error {
-	s.fetchStack()
+func (c *Cluster) fetchStackOutputs() error {
+	c.fetchStack()
 
-	s.InstanceIPs = make([]string, 0, s.NumInstances)
-	for _, o := range s.Stack.Outputs {
+	c.InstanceIPs = make([]string, 0, c.NumInstances)
+	for _, o := range c.Stack.Outputs {
 		v := *o.OutputValue
 		if strings.HasPrefix(*o.OutputKey, "IPAddress") {
-			s.InstanceIPs = append(s.InstanceIPs, v)
+			c.InstanceIPs = append(c.InstanceIPs, v)
 		}
 		if *o.OutputKey == "DNSZoneID" {
-			s.DNSZoneID = v
+			c.DNSZoneID = v
 		}
 	}
-	if len(s.InstanceIPs) != s.NumInstances {
-		return fmt.Errorf("expected stack outputs to include %d instance IPs but found %d", s.NumInstances, len(s.InstanceIPs))
+	if len(c.InstanceIPs) != c.NumInstances {
+		return fmt.Errorf("expected stack outputs to include %d instance IPs but found %d", c.NumInstances, len(c.InstanceIPs))
 	}
-	if s.DNSZoneID == "" {
+	if c.DNSZoneID == "" {
 		return fmt.Errorf("stack outputs do not include DNSZoneID")
 	}
 
-	if err := s.saveAWSFields([]string{"dns_zone_id"}, []interface{}{s.DNSZoneID}); err != nil {
-		s.installer.logger.Debug(fmt.Sprintf("Error saving DNSZoneID: %s", err.Error()))
+	if err := c.saveAWSFields([]string{"dns_zone_id"}, []interface{}{c.DNSZoneID}); err != nil {
+		c.installer.logger.Debug(fmt.Sprintf("Error saving DNSZoneID: %s", err.Error()))
 	}
 
-	if err := s.saveInstanceIPs(); err != nil {
-		s.installer.logger.Debug(fmt.Sprintf("Error saving InstanceIPs: %s", err.Error()))
+	if err := c.saveInstanceIPs(); err != nil {
+		c.installer.logger.Debug(fmt.Sprintf("Error saving InstanceIPs: %s", err.Error()))
 	}
 
 	return nil
 }
 
-func (s *Cluster) configureDNS() error {
+func (c *Cluster) configureDNS() error {
 	// TODO(jvatic): Run directly after receiving zone create complete stack event
-	s.SendInstallLogEvent("Configuring DNS")
+	c.SendInstallLogEvent("Configuring DNS")
 
 	// Set region to us-east-1, since any other region will fail for global services like Route53
-	r53 := route53.New(s.Creds, "us-east-1", nil)
-	res, err := r53.GetHostedZone(&route53.GetHostedZoneRequest{ID: aws.String(s.DNSZoneID)})
+	r53 := route53.New(c.Creds, "us-east-1", nil)
+	res, err := r53.GetHostedZone(&route53.GetHostedZoneRequest{ID: aws.String(c.DNSZoneID)})
 	if err != nil {
 		return err
 	}
-	if err := s.Domain.Configure(res.DelegationSet.NameServers); err != nil {
+	if err := c.Domain.Configure(res.DelegationSet.NameServers); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (s *Cluster) waitForDNS() error {
-	s.SendInstallLogEvent("Waiting for DNS to propagate")
+func (c *Cluster) waitForDNS() error {
+	c.SendInstallLogEvent("Waiting for DNS to propagate")
 	for {
-		status, err := s.Domain.Status()
+		status, err := c.Domain.Status()
 		if err != nil {
 			return err
 		}
@@ -723,7 +723,7 @@ func (s *Cluster) waitForDNS() error {
 		}
 		time.Sleep(time.Second)
 	}
-	s.SendInstallLogEvent("DNS is live")
+	c.SendInstallLogEvent("DNS is live")
 	return nil
 }
 
@@ -755,13 +755,13 @@ func instanceRunCmd(cmd string, sshConfig *ssh.ClientConfig, ipAddress string) (
 	return
 }
 
-func (s *Cluster) uploadDebugInfo(sshConfig *ssh.ClientConfig, ipAddress string) {
+func (c *Cluster) uploadDebugInfo(sshConfig *ssh.ClientConfig, ipAddress string) {
 	cmd := "sudo flynn-host collect-debug-info"
 	stdout, stderr, _ := instanceRunCmd(cmd, sshConfig, ipAddress)
 	var buf bytes.Buffer
 	io.Copy(&buf, stdout)
 	io.Copy(&buf, stderr)
-	s.SendInstallLogEvent(fmt.Sprintf("`%s` output for %s: %s", cmd, ipAddress, buf.String()))
+	c.SendInstallLogEvent(fmt.Sprintf("`%s` output for %s: %s", cmd, ipAddress, buf.String()))
 }
 
 type stepInfo struct {
@@ -773,21 +773,21 @@ type stepInfo struct {
 	Timestamp time.Time        `json:"ts"`
 }
 
-func (s *Cluster) bootstrap() error {
-	s.SendInstallLogEvent("Running bootstrap")
+func (c *Cluster) bootstrap() error {
+	c.SendInstallLogEvent("Running bootstrap")
 
-	if s.Stack == nil {
+	if c.Stack == nil {
 		return errors.New("No stack found")
 	}
 
-	if s.SSHKey == nil {
+	if c.SSHKey == nil {
 		return errors.New("No SSHKey found")
 	}
 
 	// bootstrap only needs to run on one instance
-	ipAddress := s.InstanceIPs[0]
+	ipAddress := c.InstanceIPs[0]
 
-	signer, err := ssh.NewSignerFromKey(s.SSHKey.PrivateKey)
+	signer, err := ssh.NewSignerFromKey(c.SSHKey.PrivateKey)
 	if err != nil {
 		return err
 	}
@@ -822,8 +822,8 @@ func (s *Cluster) bootstrap() error {
 		return err
 	}
 	sess.Stderr = os.Stderr
-	if err := sess.Start(fmt.Sprintf("CLUSTER_DOMAIN=%s flynn-host bootstrap --json", s.Domain.Name)); err != nil {
-		s.uploadDebugInfo(sshConfig, ipAddress)
+	if err := sess.Start(fmt.Sprintf("CLUSTER_DOMAIN=%s flynn-host bootstrap --json", c.Domain.Name)); err != nil {
+		c.uploadDebugInfo(sshConfig, ipAddress)
 		return err
 	}
 
@@ -851,10 +851,10 @@ func (s *Cluster) bootstrap() error {
 			return err
 		}
 		if step.State == "error" {
-			s.uploadDebugInfo(sshConfig, ipAddress)
+			c.uploadDebugInfo(sshConfig, ipAddress)
 			return fmt.Errorf("bootstrap: %s %s error: %s", step.ID, step.Action, step.Error)
 		}
-		s.SendInstallLogEvent(fmt.Sprintf("%s: %s", step.ID, step.State))
+		c.SendInstallLogEvent(fmt.Sprintf("%s: %s", step.ID, step.State))
 		if step.State != "done" {
 			continue
 		}
@@ -879,43 +879,43 @@ func (s *Cluster) bootstrap() error {
 		return err
 	}
 
-	s.ControllerKey = keyData.Key
-	s.ControllerPin = controllerCertData.Pin
-	s.CACert = controllerCertData.CACert
-	s.DashboardLoginToken = loginTokenData.Token
+	c.ControllerKey = keyData.Key
+	c.ControllerPin = controllerCertData.Pin
+	c.CACert = controllerCertData.CACert
+	c.DashboardLoginToken = loginTokenData.Token
 
-	if err := s.saveFields([]string{"controller_key", "controller_pin", "cert", "dashboard_login_token"}, []interface{}{
-		s.ControllerKey,
-		s.ControllerPin,
-		s.CACert,
-		s.DashboardLoginToken,
+	if err := c.saveFields([]string{"controller_key", "controller_pin", "cert", "dashboard_login_token"}, []interface{}{
+		c.ControllerKey,
+		c.ControllerPin,
+		c.CACert,
+		c.DashboardLoginToken,
 	}); err != nil {
-		s.installer.logger.Debug(fmt.Sprintf("Error saving ImageID: %s", err.Error()))
+		c.installer.logger.Debug(fmt.Sprintf("Error saving ImageID: %s", err.Error()))
 	}
 
 	if err := sess.Wait(); err != nil {
 		return err
 	}
-	if err := s.waitForDNS(); err != nil {
+	if err := c.waitForDNS(); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (s *Cluster) configureCLI() error {
+func (c *Cluster) configureCLI() error {
 	config, err := cfg.ReadFile(cfg.DefaultPath())
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if err := config.Add(s.ClusterConfig(), true); err != nil {
+	if err := config.Add(c.ClusterConfig(), true); err != nil {
 		return err
 	}
-	config.SetDefault(s.StackName)
+	config.SetDefault(c.StackName)
 	if err := config.SaveTo(cfg.DefaultPath()); err != nil {
 		return err
 	}
-	s.SendInstallLogEvent("CLI configured locally")
+	c.SendInstallLogEvent("CLI configured locally")
 	return nil
 }
 
@@ -948,9 +948,9 @@ flynn-host init --discovery={{.DiscoveryToken}}
 start flynn-host
 `[1:]))
 
-func (s *Cluster) GetOutput(name string) (string, error) {
+func (c *Cluster) GetOutput(name string) (string, error) {
 	var value string
-	for _, o := range s.Stack.Outputs {
+	for _, o := range c.Stack.Outputs {
 		if *o.OutputKey == name {
 			value = *o.OutputValue
 			break
