@@ -1,12 +1,17 @@
 import InstallCert from './install-cert';
 import Dispatcher from '../dispatcher';
+import { green as GreenBtnCSS } from './css/button';
 
 var InstallProgress = React.createClass({
 	render: function () {
 		return (
 			<form ref="form" method="POST" action={"https://dashboard."+ this.state.domainName +"/user/sessions"} onSubmit={this.__handleFormSubmit}>
 				<input type="hidden" name="token" value={this.state.dashboardLoginToken} />
-				<InstallCert certURL={"data:application/x-x509-ca-cert;base64,"+ this.state.caCert} />
+				{this.state.certVerified ? (
+					<button type="submit" style={GreenBtnCSS}>Go to Dashboard</button>
+				) : (
+					<InstallCert certURL={"data:application/x-x509-ca-cert;base64,"+ this.state.caCert} />
+				)}
 			</form>
 		);
 	},
@@ -16,11 +21,7 @@ var InstallProgress = React.createClass({
 	},
 
 	componentDidMount: function () {
-		if (this.state.certVerified) {
-			this.refs.form.getDOMNode().submit();
-		} else {
-			window.addEventListener("focus", this.__handleWindowFocus, false);
-		}
+		window.addEventListener("focus", this.__handleWindowFocus, false);
 	},
 
 	componentWillUnmount: function () {
@@ -29,12 +30,6 @@ var InstallProgress = React.createClass({
 
 	componentWillReceiveProps: function () {
 		this.setState(this.__getState());
-	},
-
-	componentDidUpdate: function () {
-		if (this.state.certVerified) {
-			this.refs.form.getDOMNode().submit();
-		}
 	},
 
 	__getState: function () {
@@ -50,12 +45,14 @@ var InstallProgress = React.createClass({
 	},
 
 	__handleFormSubmit: function (e) {
-		e.preventDefault();
-		Dispatcher.dispatch({
-			name: 'CHECK_CERT',
-			clusterID: this.props.clusterID,
-			domainName: this.state.domainName
-		});
+		if ( !this.state.certVerified ) {
+			e.preventDefault();
+			Dispatcher.dispatch({
+				name: 'CHECK_CERT',
+				clusterID: this.props.clusterID,
+				domainName: this.state.domainName
+			});
+		}
 	}
 });
 export default InstallProgress;
