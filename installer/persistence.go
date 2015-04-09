@@ -11,7 +11,7 @@ import (
 
 	"github.com/flynn/flynn/cli/config"
 	"github.com/flynn/flynn/pkg/sshkeygen"
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/flynn/flynn/Godeps/_workspace/src/github.com/mattn/go-sqlite3"
 )
 
 var keysDir, dbPath string
