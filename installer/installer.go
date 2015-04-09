@@ -129,30 +129,6 @@ func (i *Installer) FindCluster(id string) (*Cluster, error) {
 	return c, nil
 }
 
-func (i *Installer) ListClusters() ([]*Cluster, error) {
-	i.dbMtx.Lock()
-	defer i.dbMtx.Unlock()
-	clusters := make([]*Cluster, 0)
-	rows, err := i.db.Query(`SELECT id, state, image, discovery_token, controller_key, controller_pin, dashboard_login_token, cert, region, num_instances, instance_type, vpc_cidr, subnet_cidr, stack_name, stack_id, dns_zone_id FROM clusters INNER JOIN aws_clusters WHERE aws_clusters.cluster = clusters.aws_cluster`)
-	if err != nil {
-		return clusters, err
-	}
-	for rows.Next() {
-		c := &Cluster{installer: i}
-		err := rows.Scan(&c.ID, &c.State, &c.ImageID, &c.DiscoveryToken, &c.ControllerKey, &c.ControllerPin, &c.DashboardLoginToken, &c.CACert, &c.Region, &c.NumInstances, &c.InstanceType, &c.VpcCidr, &c.SubnetCidr, &c.StackName, &c.StackID, &c.DNSZoneID)
-		if err != nil {
-			return clusters, err
-		}
-		domain := &Domain{}
-		if err := i.db.QueryRow(`SELECT name, token FROM domains WHERE cluster = ?`, c.ID).Scan(&domain.Name, &domain.Token); err != nil {
-			return nil, err
-		}
-		c.Domain = domain
-		clusters = append(clusters, c)
-	}
-	return clusters, nil
-}
-
 func (i *Installer) DeleteCluster(id string) error {
 	i.dbMtx.Lock()
 	cluster, err := i.FindCluster(id)

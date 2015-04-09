@@ -27,6 +27,7 @@ export default createClass({
 	},
 
 	handleEvent: function (event) {
+		var cluster;
 		switch (event.name) {
 			case 'LAUNCH_AWS':
 				this.launchAWS(event);
@@ -60,18 +61,18 @@ export default createClass({
 			break;
 
 			case 'CHECK_CERT':
-				Client.checkCert(event.domainName).then(function () {
-					var cluster = this.__findCluster(event.clusterID);
-					if (cluster) {
+				cluster = this.__findCluster(event.clusterID);
+				if (cluster) {
+					Client.checkCert(event.domainName).then(function () {
 						cluster.handleEvent({
 							name: 'CERT_VERIFIED'
 						});
-					}
-				}.bind(this));
+					}.bind(this));
+				}
 			break;
 
 			default:
-				var cluster = this.__findCluster(event.clusterID);
+				cluster = this.__findCluster(event.clusterID);
 				if (cluster) {
 					cluster.handleEvent(event);
 				}

@@ -82,7 +82,6 @@ func ServeHTTP() error {
 	httpRouter := httprouter.New()
 
 	httpRouter.GET("/", api.ServeTemplate)
-	httpRouter.GET("/clusters", api.GetClusters)
 	httpRouter.GET("/clusters/:id", api.ServeTemplate)
 	httpRouter.GET("/clusters/:id/delete", api.ServeTemplate)
 	httpRouter.DELETE("/clusters/:id", api.DeleteCluster)
@@ -135,15 +134,6 @@ func (api *httpAPI) AssetManifest() (*assetManifest, error) {
 		return nil, err
 	}
 	return manifest, nil
-}
-
-func (api *httpAPI) GetClusters(w http.ResponseWriter, req *http.Request, params httprouter.Params) {
-	clusters, err := api.Installer.ListClusters()
-	if err != nil {
-		httphelper.Error(w, err)
-		return
-	}
-	httphelper.JSON(w, 200, clusters)
 }
 
 func (api *httpAPI) LaunchCluster(w http.ResponseWriter, req *http.Request, params httprouter.Params) {
