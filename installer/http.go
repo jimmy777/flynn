@@ -160,24 +160,26 @@ func (api *httpAPI) LaunchCluster(w http.ResponseWriter, req *http.Request, para
 		credentialID = "aws_env"
 	}
 	api.Installer.SaveAWSCredentials(credentialID, credentialSecret)
-	cluster := &Cluster{
-		State:        "starting",
-		Creds:        creds,
-		CredentialID: credentialID,
+	c := &AWSCluster{
+		StackName:    fmt.Sprintf("flynn-%d", time.Now().Unix()),
 		Region:       input.Region,
 		InstanceType: input.InstanceType,
-		NumInstances: input.NumInstances,
 		VpcCidr:      input.VpcCidr,
 		SubnetCidr:   input.SubnetCidr,
-		StackName:    fmt.Sprintf("flynn-%d", time.Now().Unix()),
+		creds:        creds,
+	}
+	c.cluster = &Cluster{
+		ID:           c.StackName,
+		State:        "starting",
+		CredentialID: credentialID,
+		NumInstances: input.NumInstances,
 		installer:    api.Installer,
 	}
-	cluster.ID = cluster.StackName
-	if err := api.Installer.LaunchCluster(cluster); err != nil {
+	if err := api.Installer.LaunchCluster(c); err != nil {
 		httphelper.Error(w, err)
 		return
 	}
-	httphelper.JSON(w, 200, cluster)
+	httphelper.JSON(w, 200, c.cluster)
 }
 
 func (api *httpAPI) DeleteCluster(w http.ResponseWriter, req *http.Request, params httprouter.Params) {
@@ -193,7 +195,7 @@ func (api *httpAPI) DeleteCluster(w http.ResponseWriter, req *http.Request, para
 }
 
 func (api *httpAPI) Events(w http.ResponseWriter, req *http.Request, params httprouter.Params) {
-	eventChan := make(chan *httpEvent)
+	eventChan := make(chan *Event)
 	lastEventID := req.Header.Get("Last-Event-ID")
 	api.Installer.Subscribe(eventChan, lastEventID)
 
@@ -217,7 +219,7 @@ func (api *httpAPI) Prompt(w http.ResponseWriter, req *http.Request, params http
 		return
 	}
 
-	var input *httpPrompt
+	var input *Prompt
 	if err := httphelper.DecodeJSON(req, &input); err != nil {
 		httphelper.Error(w, err)
 		return

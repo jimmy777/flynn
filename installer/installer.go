@@ -1,10 +1,13 @@
 package installer
 
 import (
-	"database/sql"
 	"errors"
+	"fmt"
+	"reflect"
+	"strings"
 	"sync"
 
+	"github.com/cznic/ql"
 	"github.com/flynn/flynn/Godeps/_workspace/src/github.com/awslabs/aws-sdk-go/aws"
 	log "github.com/flynn/flynn/Godeps/_workspace/src/gopkg.in/inconshreveable/log15.v2"
 )
@@ -12,23 +15,23 @@ import (
 var ClusterNotFoundError = errors.New("Cluster not found")
 
 type Installer struct {
-	db            *sql.DB
-	events        []*httpEvent
+	db            *ql.DB
+	events        []*Event
 	subscriptions []*Subscription
-	clusters      []*Cluster
+	clusters      []interface{}
 	logger        log.Logger
 
-	dbMtx        sync.Mutex
+	dbMtx        sync.RWMutex
 	eventsMtx    sync.Mutex
 	subscribeMtx sync.Mutex
-	clustersMtx  sync.Mutex
+	clustersMtx  sync.RWMutex
 }
 
 func NewInstaller(l log.Logger) *Installer {
 	installer := &Installer{
-		events:        make([]*httpEvent, 0),
+		events:        make([]*Event, 0),
 		subscriptions: make([]*Subscription, 0),
-		clusters:      make([]*Cluster, 0),
+		clusters:      make([]interface{}, 0),
 		logger:        l,
 	}
 	if err := installer.openDB(); err != nil {
@@ -37,56 +40,95 @@ func NewInstaller(l log.Logger) *Installer {
 	return installer
 }
 
-func (i *Installer) LaunchCluster(c *Cluster) error {
+func (i *Installer) LaunchCluster(c interface{}) error {
+	switch v := c.(type) {
+	case *AWSCluster:
+		return i.launchAWSCluster(v)
+	default:
+		return fmt.Errorf("Invalid cluster type %T", c)
+	}
+}
+
+func (i *Installer) launchAWSCluster(c *AWSCluster) error {
 	if err := c.SetDefaultsAndValidate(); err != nil {
 		return err
 	}
-	i.dbMtx.Lock()
-	tx, err := i.db.Begin()
-	if err != nil {
-		i.dbMtx.Unlock()
+
+	if err := i.saveAWSCluster(c); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT INTO aws_clusters (cluster, region, num_instances, instance_type, vpc_cidr, subnet_cidr, stack_name) VALUES (?, ?, ?, ?, ?, ?, ?)`, c.ID, c.Region, c.NumInstances, c.InstanceType, c.VpcCidr, c.SubnetCidr, c.StackName); err != nil {
-		tx.Rollback()
-		i.dbMtx.Unlock()
-		return err
-	}
-	if _, err := tx.Exec(`INSERT INTO clusters (id, aws_cluster, credential, state) VALUES (?, ?, ?, ?)`, c.ID, c.ID, c.CredentialID, c.State); err != nil {
-		tx.Rollback()
-		i.dbMtx.Unlock()
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		i.dbMtx.Unlock()
-		return err
-	}
-	i.dbMtx.Unlock()
+
 	i.clustersMtx.Lock()
 	i.clusters = append(i.clusters, c)
 	i.clustersMtx.Unlock()
-	i.SendEvent(&httpEvent{
+	i.SendEvent(&Event{
 		Type:      "new_cluster",
-		Cluster:   c,
-		ClusterID: c.ID,
+		Cluster:   c.cluster,
+		ClusterID: c.cluster.ID,
 	})
-	c.RunAWS()
+	c.Run()
+	return nil
+}
+
+func (i *Installer) saveAWSCluster(c *AWSCluster) error {
+	i.dbMtx.Lock()
+	defer i.dbMtx.Unlock()
+
+	clusterFields, err := ql.Marshal(c.cluster)
+	if err != nil {
+		return err
+	}
+	awsFields, err := ql.Marshal(c)
+	if err != nil {
+		return err
+	}
+	clustersVStr := make([]string, 0, len(clusterFields))
+	awsVStr := make([]string, 0, len(awsFields))
+	fields := make([]interface{}, 0, len(clusterFields)+len(awsFields))
+	for idx, f := range clusterFields {
+		clustersVStr = append(clustersVStr, fmt.Sprintf("$%d", idx+1))
+		fields = append(fields, f)
+	}
+	for idx, f := range awsFields {
+		awsVStr = append(awsVStr, fmt.Sprintf("$%d", idx+1))
+		fields = append(fields, f)
+	}
+
+	ctx := ql.NewRWCtx()
+	list, err := ql.Compile(fmt.Sprintf(`
+	BEGIN TRANSACTION;
+		INSERT INTO clusters VALUES (%s);
+		INSERT INTO aws_clusters VALUES(%s);
+	COMMIT;`, strings.Join(clustersVStr, ", "), strings.Join(awsVStr, ", ")))
+	if err != nil {
+		return err
+	}
+	_, _, err = i.db.Execute(ctx, list, fields...)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
 func (i *Installer) SaveAWSCredentials(id, secret string) error {
 	i.dbMtx.Lock()
 	defer i.dbMtx.Unlock()
-	tx, err := i.db.Begin()
+
+	ctx := ql.NewRWCtx()
+	list, err := ql.Compile(`
+	BEGIN TRANSACTION;
+		INSERT INTO credentials (ID, Secret) VALUES ($1, $2);
+	COMMIT;`)
 	if err != nil {
-		tx.Rollback()
 		return err
 	}
-	if _, err := tx.Exec(`INSERT INTO credentials (id, secret) VALUES (?, ?)`, id, secret); err != nil {
-		tx.Rollback()
+	_, _, err = i.db.Execute(ctx, list, id, secret)
+	if err != nil {
 		return err
 	}
-	return tx.Commit()
+
+	return nil
 }
 
 func (i *Installer) FindAWSCredentials(id string) (aws.CredentialsProvider, error) {
@@ -94,37 +136,38 @@ func (i *Installer) FindAWSCredentials(id string) (aws.CredentialsProvider, erro
 		return aws.EnvCreds()
 	}
 	var secret string
-	if err := i.db.QueryRow(`SELECT secret FROM credentials WHERE id = ?`, id).Scan(&secret); err != nil {
-		return nil, err
-	}
+
+	// TODO(jvatic): Fetch credential from db
+
 	return aws.Creds(id, secret, ""), nil
 }
 
 func (i *Installer) FindCluster(id string) (*Cluster, error) {
-	i.clustersMtx.Lock()
+	i.clustersMtx.RLock()
 	for _, c := range i.clusters {
-		if c.ID == id {
-			i.clustersMtx.Unlock()
-			return c, nil
+		v := reflect.Indirect(reflect.ValueOf(c))
+		cluster := v.FieldByName("cluster").Interface().(*Cluster)
+		if cluster.ID == id {
+			i.clustersMtx.RUnlock()
+			return cluster, nil
 		}
 	}
-	i.clustersMtx.Unlock()
+	i.clustersMtx.RUnlock()
+
+	i.dbMtx.RLock()
+	defer i.dbMtx.RUnlock()
 
 	c := &Cluster{ID: id, installer: i}
-	err := i.db.QueryRow(`SELECT credential, state, image, discovery_token, controller_key, controller_pin, dashboard_login_token, cert, region, num_instances, instance_type, vpc_cidr, subnet_cidr, stack_name, stack_id, dns_zone_id FROM clusters INNER JOIN aws_clusters WHERE aws_clusters.cluster = clusters.aws_cluster AND clusters.id = ? LIMIT 1`, c.ID).Scan(&c.CredentialID, &c.State, &c.ImageID, &c.DiscoveryToken, &c.ControllerKey, &c.ControllerPin, &c.DashboardLoginToken, &c.CACert, &c.Region, &c.NumInstances, &c.InstanceType, &c.VpcCidr, &c.SubnetCidr, &c.StackName, &c.StackID, &c.DNSZoneID)
-	if err == sql.ErrNoRows {
-		return nil, ClusterNotFoundError
-	}
-	if err != nil {
-		return nil, err
-	}
+
+	// TODO(jvatic): Fetch cluster from db
+
 	if c.Creds, err = i.FindAWSCredentials(c.CredentialID); err != nil {
 		return nil, err
 	}
 	domain := &Domain{}
-	if err := i.db.QueryRow(`SELECT name, token FROM domains WHERE cluster = ?`, c.ID).Scan(&domain.Name, &domain.Token); err != nil {
-		return nil, err
-	}
+
+	// TODO(jvatic): Fetch domain from db
+
 	c.Domain = domain
 	return c, nil
 }
@@ -149,7 +192,7 @@ func (i *Installer) DeleteCluster(id string) error {
 
 	// TODO(jvatic): remove from database once stack deletion complete
 	cluster.DeleteAWS()
-	i.SendEvent(&httpEvent{ // TODO(jvatic): Send two events, one before cleanup and one after
+	i.SendEvent(&Event{ // TODO(jvatic): Send two events, one before cleanup and one after
 		Type:      "cluster_deleted",
 		ClusterID: id,
 	})

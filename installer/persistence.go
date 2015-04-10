@@ -2,16 +2,15 @@ package installer
 
 import (
 	"crypto/x509"
-	"database/sql"
 	"encoding/pem"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 
+	"github.com/cznic/ql"
 	"github.com/flynn/flynn/cli/config"
 	"github.com/flynn/flynn/pkg/sshkeygen"
-	_ "github.com/flynn/flynn/Godeps/_workspace/src/github.com/mattn/go-sqlite3"
 )
 
 var keysDir, dbPath string
@@ -29,7 +28,9 @@ func (i *Installer) openDB() error {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return err
 	}
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := ql.OpenFile(dbPath, &ql.Options{
+		CanCreate: true,
+	})
 	if err != nil {
 		return err
 	}

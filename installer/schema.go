@@ -1,80 +1,101 @@
 package installer
 
+import (
+	"time"
+
+	"github.com/cznic/ql"
+	"github.com/flynn/flynn/Godeps/_workspace/src/github.com/awslabs/aws-sdk-go/aws"
+	"github.com/flynn/flynn/Godeps/_workspace/src/github.com/awslabs/aws-sdk-go/gen/cloudformation"
+	"github.com/flynn/flynn/Godeps/_workspace/src/github.com/awslabs/aws-sdk-go/gen/ec2"
+	"github.com/flynn/flynn/pkg/sshkeygen"
+)
+
+type credential struct {
+	ID     string `json:"id" ql:"index xID"`
+	Secret string `json:"secret"`
+}
+
+type AWSCluster struct {
+	ClusterID    string `json:"cluster_id" ql:"index xCluster"`
+	StackID      string `json:"stack_id"`
+	StackName    string `json:"stack_name"`
+	ImageID      string `json:"image_id,omitempty"`
+	Region       string `json:"region"`
+	InstanceType string `json:"instance_type"`
+	VpcCidr      string `json:"vpc_cidr"`
+	SubnetCidr   string `json:"subnet_cidr"`
+	DNSZoneID    string `json:"dns_zone_id"`
+
+	cluster *Cluster
+	creds   aws.CredentialsProvider
+	stack   *cloudformation.Stack
+	cf      *cloudformation.CloudFormation
+	ec2     *ec2.EC2
+}
+
+type Cluster struct {
+	ID                  string            `json:"id" ql:"index xID"`
+	CredentialID        string            `json:"-"`
+	Type                string            `json:"type"`                    // enum(aws)
+	State               string            `json:"state" ql:"index xState"` // enum(starting, error, running, deleting)
+	Name                string            `json:"name" ql:"-"`
+	NumInstances        int               `json:"num_instances"`
+	ControllerKey       string            `json:"controller_key,omitempty"`
+	ControllerPin       string            `json:"controller_pin,omitempty"`
+	DashboardLoginToken string            `json:"dashboard_login_token,omitempty"`
+	Domain              *Domain           `json:"domain" ql:"-"`
+	CACert              string            `json:"ca_cert"`
+	SSHKey              *sshkeygen.SSHKey `json:"-" ql:"-"`
+	SSHKeyName          string            `json:"ssh_key_name,omitempty"`
+	VpcCidr             string            `json:"vpc_cidr_block,omitempty"`
+	SubnetCidr          string            `json:"subnet_cidr_block,omitempty"`
+	DiscoveryToken      string            `json:"discovery_token"`
+	InstanceIPs         []string          `json:"instance_ips,omitempty"`
+	DNSZoneID           string            `json:"dns_zone_id,omitempty"`
+
+	installer     *Installer
+	pendingPrompt *Prompt
+	done          bool
+}
+
+type Event struct {
+	ID          string    `json:"id" ql:"index xID"`
+	Timestamp   time.Time `json:"timestamp"`
+	Type        string    `json:"type"`
+	ClusterID   string    `json:"cluster_id",omitempty`
+	PromptID    string    `json:"-"`
+	Description string    `json:"description,omitempty"`
+	Prompt      *Prompt   `json:"prompt,omitempty" ql"-"`
+	Cluster     *Cluster  `json:"cluster,omitempty" ql"-"`
+}
+
+type Prompt struct {
+	ID       string `json:"id"`
+	Type     string `json:"type,omitempty"`
+	Message  string `json:"message,omitempty"`
+	Yes      bool   `json:"yes,omitempty"`
+	Input    string `json:"input,omitempty"`
+	Resolved bool   `json:"resolved,omitempty"`
+	resChan  chan *Prompt
+	cluster  *Cluster
+}
+
 func (i *Installer) migrateDB() error {
-	sqlStr := `
-	CREATE TABLE IF NOT EXISTS credentials (
-		id TEXT NOT NULL PRIMARY KEY,
-		secret TEXT NOT NULL
-	);
+	schemaInterfaces := map[interface{}]string{
+		(*credential)(nil): "credentials",
+		(*Cluster)(nil):    "clusters",
+		(*AWSCluster)(nil): "aws_clusters",
+		(*Event)(nil):      "events",
+		(*Prompt)(nil):     "prompts",
+	}
 
-  CREATE TABLE IF NOT EXISTS aws_clusters (
-    cluster TEXT NOT NULL PRIMARY KEY,
-    region TEXT NOT NULL,
-    num_instances INTEGER NOT NULL,
-    instance_type TEXT NOT NULL,
-		vpc_cidr TEXT NOT NULL,
-		subnet_cidr TEXT NOT NULL,
-		stack_name TEXT NOT NULL,
-		stack_id TEXT NOT NULL DEFAULT '',
-		dns_zone_id TEXT NOT NULL DEFAULT ''
-  );
-
-  CREATE TABLE IF NOT EXISTS instances (
-		ip TEXT NOT NULL,
-		cluster TEXT NOT NULL,
-
-    FOREIGN KEY(cluster) REFERENCES clusters(id)
-	);
-
-	CREATE TABLE IF NOT EXISTS domains (
-		name TEXT NOT NULL PRIMARY KEY,
-		token TEXT NOT NULL,
-		cluster TEXT NOT NULL,
-
-    FOREIGN KEY(cluster) REFERENCES clusters(id)
-	);
-
-  CREATE TABLE IF NOT EXISTS clusters (
-    id TEXT NOT NULL PRIMARY KEY,
-    state TEXT NOT NULL,
-		aws_cluster TEXT,
-		credential TEXT NOT NULL,
-
-		image TEXT NOT NULL DEFAULT '',
-		discovery_token TEXT NOT NULL DEFAULT '',
-		controller_key TEXT NOT NULL DEFAULT '',
-		controller_pin TEXT NOT NULL DEFAULT '',
-		dashboard_login_token TEXT NOT NULL DEFAULT '',
-		cert TEXT NOT NULL DEFAULT '',
-
-    FOREIGN KEY(aws_cluster) REFERENCES aws_clusters(cluster),
-    FOREIGN KEY(credential) REFERENCES credentials(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS prompts (
-    id TEXT NOT NULL PRIMARY KEY,
-    cluster TEXT NOT NULL,
-    type TEXT NOT NULL,
-    message TEXT NOT NULL DEFAULT '',
-    yes INTEGER NOT NULL DEFAULT 0,
-    input TEXT NOT NULL DEFAULT '',
-    resolved INTEGER NOT NULL DEFAULT 0,
-
-    FOREIGN KEY(cluster) REFERENCES clusters(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS events (
-    id TEXT NOT NULL PRIMARY KEY,
-    cluster TEXT NOT NULL DEFAULT '',
-    prompt TEXT NOT NULL DEFAULT '',
-    type TEXT NOT NULL,
-    timestamp TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-
-    FOREIGN KEY(cluster) REFERENCES clusters(id),
-    FOREIGN KEY(prompt) REFERENCES prompts(id)
-  );
-  `
-	_, err := i.db.Exec(sqlStr)
-	return err
+	for i, tableName := range schemaInterfaces {
+		schema, err := ql.Schema(i, tableName, nil)
+		if err != nil {
+			return err
+		}
+		if _, _, err := i.db.Execute(ql.NewRWCtx(), schema); err != nil {
+			return err
+		}
+	}
 }

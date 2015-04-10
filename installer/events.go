@@ -10,40 +10,18 @@ import (
 	"github.com/flynn/flynn/pkg/random"
 )
 
-type httpPrompt struct {
-	ID       string `json:"id"`
-	Type     string `json:"type,omitempty"`
-	Message  string `json:"message,omitempty"`
-	Yes      bool   `json:"yes,omitempty"`
-	Input    string `json:"input,omitempty"`
-	Resolved bool   `json:"resolved,omitempty"`
-	resChan  chan *httpPrompt
-	cluster  *Cluster
-}
-
-func (prompt *httpPrompt) Resolve(res *httpPrompt) {
+func (prompt *Prompt) Resolve(res *Prompt) {
 	prompt.Resolved = true
 	prompt.resChan <- res
 }
 
-type httpEvent struct {
-	ID          string      `json:"id"`
-	Timestamp   time.Time   `json:"timestamp"`
-	Type        string      `json:"type"`
-	ClusterID   string      `json:"cluster_id",omitempty`
-	PromptID    string      `json:"-"`
-	Description string      `json:"description,omitempty"`
-	Prompt      *httpPrompt `json:"prompt,omitempty"`
-	Cluster     *Cluster    `json:"cluster,omitempty"`
-}
-
-func (event *httpEvent) EventID() string {
+func (event *Event) EventID() string {
 	return event.ID
 }
 
 type Subscription struct {
 	LastEventID string
-	EventChan   chan *httpEvent
+	EventChan   chan *Event
 	DoneChan    chan struct{}
 }
 
@@ -54,7 +32,7 @@ func (sub *Subscription) SendEvents(i *Installer) {
 	}
 }
 
-func (i *Installer) Subscribe(eventChan chan *httpEvent, lastEventID string) {
+func (i *Installer) Subscribe(eventChan chan *Event, lastEventID string) {
 	i.subscribeMtx.Lock()
 	defer i.subscribeMtx.Unlock()
 
@@ -70,10 +48,10 @@ func (i *Installer) Subscribe(eventChan chan *httpEvent, lastEventID string) {
 	i.subscriptions = append(i.subscriptions, subscription)
 }
 
-func (i *Installer) GetEventsSince(eventID string) []*httpEvent {
+func (i *Installer) GetEventsSince(eventID string) []*Event {
 	i.dbMtx.Lock()
 	defer i.dbMtx.Unlock()
-	events := make([]*httpEvent, 0, len(i.events))
+	events := make([]*Event, 0, len(i.events))
 	var ts time.Time
 	if eventID != "" {
 		nano, err := strconv.ParseInt(strings.TrimPrefix(eventID, "event-"), 10, 64)
@@ -83,13 +61,14 @@ func (i *Installer) GetEventsSince(eventID string) []*httpEvent {
 			ts = time.Unix(0, nano)
 		}
 	}
+	// TODO(jvatic): Convert the below queries to use ql
 	rows, err := i.db.Query(`SELECT id, cluster, prompt, type, timestamp, description FROM events WHERE datetime(timestamp) >= datetime(?)`, ts.Truncate(time.Second).Format(time.RFC3339Nano))
 	if err != nil {
 		i.logger.Debug(fmt.Sprintf("GetEventsSince SQL Error: %s", err.Error()))
 		return events
 	}
 	for rows.Next() {
-		event := &httpEvent{}
+		event := &Event{}
 		var timestamp string
 		if err := rows.Scan(&event.ID, &event.ClusterID, &event.PromptID, &event.Type, &timestamp, &event.Description); err != nil {
 			i.logger.Debug(fmt.Sprintf("GetEventsSince Scan Error: %s", err.Error()))
@@ -117,7 +96,7 @@ func (i *Installer) GetEventsSince(eventID string) []*httpEvent {
 			}
 		}
 		if event.PromptID != "" {
-			p := &httpPrompt{}
+			p := &Prompt{}
 			if err := i.db.QueryRow(`SELECT id, type, message, yes, input, resolved FROM prompts WHERE id = ? AND cluster = ?`, event.PromptID, event.ClusterID).Scan(&p.ID, &p.Type, &p.Message, &p.Yes, &p.Input, &p.Resolved); err != nil {
 				i.logger.Debug(fmt.Sprintf("GetEventsSince Prompt Scan Error: %s", err.Error()))
 				continue
@@ -129,7 +108,7 @@ func (i *Installer) GetEventsSince(eventID string) []*httpEvent {
 	return events
 }
 
-func (i *Installer) SendEvent(event *httpEvent) {
+func (i *Installer) SendEvent(event *Event) {
 	event.Timestamp = time.Now()
 	event.ID = fmt.Sprintf("event-%d", event.Timestamp.UnixNano())
 
@@ -165,14 +144,14 @@ func (i *Installer) SendEvent(event *httpEvent) {
 	}
 }
 
-func (c *Cluster) findPrompt(id string) (*httpPrompt, error) {
+func (c *Cluster) findPrompt(id string) (*Prompt, error) {
 	if c.pendingPrompt != nil && c.pendingPrompt.ID == id {
 		return c.pendingPrompt, nil
 	}
 	return nil, errors.New("Prompt not found")
 }
 
-func (c *Cluster) sendPrompt(prompt *httpPrompt) *httpPrompt {
+func (c *Cluster) sendPrompt(prompt *Prompt) *Prompt {
 	c.pendingPrompt = prompt
 
 	c.installer.dbMtx.Lock()
@@ -190,7 +169,7 @@ func (c *Cluster) sendPrompt(prompt *httpPrompt) *httpPrompt {
 	}
 	c.installer.dbMtx.Unlock()
 
-	c.sendEvent(&httpEvent{
+	c.sendEvent(&Event{
 		Type:      "prompt",
 		ClusterID: c.ID,
 		Prompt:    prompt,
@@ -212,7 +191,7 @@ func (c *Cluster) sendPrompt(prompt *httpPrompt) *httpPrompt {
 		}
 	}
 
-	c.sendEvent(&httpEvent{
+	c.sendEvent(&Event{
 		Type:      "prompt",
 		ClusterID: c.ID,
 		Prompt:    prompt,
@@ -222,33 +201,33 @@ func (c *Cluster) sendPrompt(prompt *httpPrompt) *httpPrompt {
 }
 
 func (c *Cluster) YesNoPrompt(msg string) bool {
-	res := c.sendPrompt(&httpPrompt{
+	res := c.sendPrompt(&Prompt{
 		ID:      random.Hex(16),
 		Type:    "yes_no",
 		Message: msg,
-		resChan: make(chan *httpPrompt),
+		resChan: make(chan *Prompt),
 		cluster: c,
 	})
 	return res.Yes
 }
 
 func (c *Cluster) PromptInput(msg string) string {
-	res := c.sendPrompt(&httpPrompt{
+	res := c.sendPrompt(&Prompt{
 		ID:      random.Hex(16),
 		Type:    "input",
 		Message: msg,
-		resChan: make(chan *httpPrompt),
+		resChan: make(chan *Prompt),
 		cluster: c,
 	})
 	return res.Input
 }
 
-func (c *Cluster) sendEvent(event *httpEvent) {
+func (c *Cluster) sendEvent(event *Event) {
 	c.installer.SendEvent(event)
 }
 
 func (c *Cluster) SendInstallLogEvent(description string) {
-	c.sendEvent(&httpEvent{
+	c.sendEvent(&Event{
 		Type:        "install_log",
 		ClusterID:   c.ID,
 		Description: description,
@@ -256,7 +235,7 @@ func (c *Cluster) SendInstallLogEvent(description string) {
 }
 
 func (c *Cluster) SendError(err error) {
-	c.sendEvent(&httpEvent{
+	c.sendEvent(&Event{
 		Type:        "error",
 		ClusterID:   c.ID,
 		Description: err.Error(),
@@ -264,7 +243,7 @@ func (c *Cluster) SendError(err error) {
 }
 
 func (c *Cluster) handleDone() {
-	c.sendEvent(&httpEvent{
+	c.sendEvent(&Event{
 		Type:      "install_done",
 		ClusterID: c.ID,
 		Cluster:   c,
